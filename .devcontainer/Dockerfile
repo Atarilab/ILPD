@@ -54,30 +54,33 @@ RUN apt-get update \
   && chmod 0440 /etc/sudoers.d/$USERNAME \
   && rm -rf /var/lib/apt/lists/*
 
-# dependencies
+# Dependencies
 RUN sudo apt-get update \
   && sudo apt-get install -y \
   coinor-libipopt-dev \
   libeigen3-dev \
   && rm -rf /var/lib/apt/lists/*
 
-# Pybind11 global
-RUN pip install pybind11[global]
-
-# Dependencies
+# Python dependencies
 RUN python3 -m pip install --upgrade \
-    pip\
-    matplotlib\
-    jupyter\
-    PyQt5\
-    pytest\
-    robot_descriptions\
-    mujoco\
-    opencv-python 
-
-# Debug Dependencies
-RUN pip3 install memray memory-profiler Pympler
-
+    pip \
+    pybind11[global] \
+    matplotlib \
+    jupyter \
+    PyQt5 \
+    pytest \
+    robot_descriptions \
+    mujoco \
+    opencv-python \
+    memray \
+    memory-profiler \
+    Pympler \
+    torch \
+    diffusers \
+    tensorboard \
+    scikit-learn \
+    einops
+  
 # install robotpkg
 RUN sudo mkdir -p /etc/apt/keyrings
 RUN curl http://robotpkg.openrobots.org/packages/debian/robotpkg.asc | sudo tee /etc/apt/keyrings/robotpkg.asc
