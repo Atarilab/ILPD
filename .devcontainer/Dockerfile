@@ -1,5 +1,5 @@
 # Base image
-FROM ubuntu:jammy
+FROM nvidia/cuda:12.4.0-base-ubuntu22.04
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -76,6 +76,7 @@ RUN python3 -m pip install --upgrade \
     memory-profiler \
     Pympler \
     torch \
+    tyro \
     diffusers \
     tensorboard \
     scikit-learn \
