@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader
 from torch.nn import Module
-import torch.nn as nnW
+import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.optim as optim
 from diffusers.training_utils import EMAModel
