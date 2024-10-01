@@ -79,8 +79,7 @@ def get_model(cfg:Config=None, state_path:str="") -> Module:
         assert len(config_path) > 0, f"Config file not found in {run_dir}"
         cfg = Config(config_path[0])
 
-        model_name = cfg.get_value("model_name")
-        cfg_model = cfg.model["PARAMS"]
+        model_name, cfg_model = cfg.model()
 
         # Code version of the run directory
         absolute_models_path = os.path.join(os.path.abspath(run_dir), "models")
@@ -106,17 +105,33 @@ def get_model(cfg:Config=None, state_path:str="") -> Module:
     
     elif cfg != None:
         model_loader = ModelLoader()
-        model_name = cfg.get_value("model_name")
-        cfg_model = cfg.model["PARAMS"]
+        model_name, cfg_model = cfg.model()
+        
         # Model instance
         model = model_loader.load(model_name, cfg_model)
 
     return model
 
-def get_config(state_path:str="") -> Config:
+def get_config(run_dir:str="") -> Config:
     # Get run config
-    run_dir = os.path.split(state_path)[0]
     config_path = glob.glob(run_dir + "/*.yaml") + glob.glob(run_dir + "/*.yml")
-    cfg = Config(config_path[0])
-    
+    if config_path:
+        cfg = Config(config_path[0])
+    else:
+        cfg = None
     return cfg
+
+def get_model_and_config(model_path : str) -> Tuple[Module, Config]:
+    run_dir = os.path.split(model_path)[0]
+    cfg = get_config(run_dir)
+    model = get_model(model_path)
+    
+    if (model is None):
+        print("Can't load pretrained model from", model_path)
+    if (cfg is None):
+        print("Can't config file from", run_dir)
+    # Keep the same run dir
+    else:
+        cfg.change_value("logdir", run_dir)
+        
+    return model, cfg

@@ -7,16 +7,19 @@ DATA:
     contact_conditioned: False
     normalize: True
     sigma_noise: 0.
-    history_length: 1
+    history_length: 10
 
 MODEL:
-  name: MLPPosEmb
+  name: LSTMHist
   PARAMS: # arguments that will be passed to the chosen models
     input_dim: 50
     output_dim: 12
+    state_dim: 45
+    history_length: 10
+    n_layers: 2
     n_hidden: 3
-    latent_dim: 256
-    dropout: 0.3
+    latent_dim: 128
+    dropout: 0.2
     batch_norm: True
 
 TRAINER: # arguments that will be passed to the trainer
@@ -27,8 +30,9 @@ TRAINER: # arguments that will be passed to the trainer
       optimizer_name: Adam
     lr: 5.0e-4
     epochs: 300
-    logdir: "./logs/MLP/trot_vel_set_points"
+    logdir: "./logs/MLP/trot_vel_torques/LSTM"
     use_logger: True
+    run_dir_name: ""
     # lr_scheduler:
     #   lr_scheduler_name: ExponentialLR
     #   PARAMS:

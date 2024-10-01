@@ -7,19 +7,23 @@ DATA:
     contact_conditioned: False
     normalize: True
     sigma_noise: 0.
-    history_length: 1
+    history_length: 5
 
 MODEL:
-  name: MLPPosEmb
+  name: TransformerHist
   PARAMS: # arguments that will be passed to the chosen models
     input_dim: 50
     output_dim: 12
+    state_dim: 45
+    history_length: 5
+    n_layers: 2
+    n_heads: 4
     n_hidden: 3
-    latent_dim: 256
+    latent_dim: 128
     dropout: 0.3
     batch_norm: True
 
-TRAINER: # arguments that will be passed to the trainer
+TRAINING: # arguments that will be passed to the trainerTRAINER: # arguments that will be passed to the trainer
   name: "supervised"
   PARAMS:
     criterion_str: L1Loss
@@ -27,8 +31,9 @@ TRAINER: # arguments that will be passed to the trainer
       optimizer_name: Adam
     lr: 5.0e-4
     epochs: 300
-    logdir: "./logs/MLP/trot_vel_set_points"
+    logdir: "./logs/MLP/trot_vel_torques"
     use_logger: True
+    run_dir_name: "h_len_5"
     # lr_scheduler:
     #   lr_scheduler_name: ExponentialLR
     #   PARAMS:

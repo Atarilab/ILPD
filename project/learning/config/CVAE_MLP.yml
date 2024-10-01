@@ -7,28 +7,33 @@ DATA:
     contact_conditioned: False
     normalize: True
     sigma_noise: 0.
-    history_length: 1
+    history_length: 10
+    CVAE: True
 
 MODEL:
-  name: MLPPosEmb
+  name: CVAE_MLP
   PARAMS: # arguments that will be passed to the chosen models
     input_dim: 50
     output_dim: 12
+    state_dim: 45
+    history_length: 5
     n_hidden: 3
-    latent_dim: 256
-    dropout: 0.3
+    hidden_dim: 128
+    latent_dim: 8
+    dropout: 0.2
     batch_norm: True
 
 TRAINER: # arguments that will be passed to the trainer
-  name: "supervised"
+  name: "cvae"
   PARAMS:
-    criterion_str: L1Loss
+    criterion_str: SmoothL1Loss
     optimizer:
       optimizer_name: Adam
-    lr: 5.0e-4
+    lr: 1.0e-3
     epochs: 300
-    logdir: "./logs/MLP/trot_vel_set_points"
+    logdir: "./logs/MLP/trot_vel_torques/CVAE_MLP"
     use_logger: True
+    run_dir_name: "latent_dim_8"
     # lr_scheduler:
     #   lr_scheduler_name: ExponentialLR
     #   PARAMS:

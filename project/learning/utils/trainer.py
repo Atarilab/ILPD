@@ -3,12 +3,11 @@
 import os, glob
 import torch
 import math
-import inspect
 import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 from torch.utils.data import DataLoader
 from torch.nn import Module
-import torch.nn as nn
+import torch.nn as nnW
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.optim as optim
 from diffusers.training_utils import EMAModel
@@ -99,11 +98,17 @@ class TrainerBase():
         
         # Load model
         self.model = model.to(self.device)
+        print("Training on", self.device)
         if os.path.exists(self.model_path):
             self._load_state(self.model_path)
         else:
             self._copy_config(cfg.config_path)
-                
+            
+        # Check model config
+        if not self._test_config():
+            self.log_manager.remove_run_dir()
+            raise RuntimeError("Invalid model configuration")
+        
         # Logger
         self.logger = LoggerAbstract(self.run_dir)
         if self.use_logger and not(self.log_manager._is_run_dir(self.run_dir)):
@@ -120,7 +125,8 @@ class TrainerBase():
                 self.optional_args[k] = v
             setattr(self, k, v)
 
-        for k, v in self.cfg.training.items():
+        _, cfg_trainer = self.cfg.trainer()
+        for k, v in cfg_trainer.items():
             self.optional_args[k] = v
             setattr(self, k, v)
         
@@ -266,7 +272,6 @@ class TrainerBase():
             current_lr = self.scheduler.get_lr()
             self.logger.write_scalar("LR/values", current_lr, self.current_epoch)
 
-
     def _write_figures(self, batch):
         """
         Save the plots in logs writer.
@@ -293,6 +298,15 @@ class TrainerBase():
                         title = f"figure_{i}"
 
                     self.logger.write_figure(title, fig, self.current_epoch)
+                    
+    def _test_config(self) -> bool:
+        """
+        Test if the model and data config are valid.
+        Check for invalid dimensions.
+        To be overwritten.
+        """
+        return True
+        
         
 
 ####################################################
@@ -300,6 +314,7 @@ class TrainerBase():
 ####################################################
 
 class TrainerSupervised(TrainerBase):
+    STR = "supervised"
     """
     Trainer specialized for supervised learning tasks.
     """
@@ -433,12 +448,29 @@ class TrainerSupervised(TrainerBase):
         self._write_hparams()
         self._write_results()
         self._save_training_curves()
+        
+    def _test_config(self) -> bool:
+        valid = False
+        try:
+            sample = self.dataloader_train.dataset[0]
+            input = sample["input"].unsqueeze(0).to(self.device)
+            target = sample["target"].unsqueeze(0).to(self.device)
+            
+            out = self.model(input)
+            assert out.shape == target.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
+            valid = True
+        except Exception as e:
+            print("Invalid model configuration.")
+            print(e)
+            
+        return valid
 
 ####################################################
 ####################    DDPM    ####################
 ####################################################
         
 class TrainerDDPM(TrainerSupervised):
+    STR = "ddpm"
     """
     Trainer specialized for DDPM (Denosing Diffusion Probabilistic Models).
     """
@@ -469,7 +501,8 @@ class TrainerDDPM(TrainerSupervised):
         optional_args.update(kwargs)
 
         if not isinstance(model, DDPM) or not isinstance(model, CDCD):
-            ddpm_model = DDPM(model, **cfg.model["PARAMS"])
+            _, cfg_model = cfg.model()
+            ddpm_model = DDPM(model, **cfg_model)
         else:
             ddpm_model = model
 
@@ -603,11 +636,29 @@ class TrainerDDPM(TrainerSupervised):
 
         return val_loss
 
+    def _test_config(self) -> bool:
+        valid = False
+        try:
+            sample = self.dataloader_train.dataset[0]
+            input = sample["data"].unsqueeze(0).to(self.device)
+            condition = sample.get("condition", None)
+            condition = condition.unsqueeze(0).to(self.device) if condition is not None else None
+
+            out = self.model(input, condition=condition)
+            assert out.shape == input.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
+            valid = True
+        except Exception as e:
+            print("Invalid DDPM model configuration.")
+            print(e)
+            
+        return valid
+    
 ####################################################
 ####################    CDCD    ####################
 ####################################################
         
 class TrainerCDCD(TrainerDDPM):
+    STR = "cdcd"
     """
     Trainer specialized for CDCD (Continuous Diffusion with Categorical Data).
     """
@@ -634,7 +685,8 @@ class TrainerCDCD(TrainerDDPM):
         optional_args.update(kwargs)
 
         if not isinstance(model, CDCD):
-            cdcd_model = CDCD(model, **cfg.model["PARAMS"])
+            _, cfg_model = cfg.model()
+            cdcd_model = CDCD(model, **cfg_model)
         else:
             cdcd_model = model
 
@@ -721,18 +773,201 @@ class TrainerCDCD(TrainerDDPM):
         self._write_figures(batch)
 
         return val_loss
+    
+    def _test_config(self) -> bool:
+            valid = False
+            try:
+                sample = self.dataloader_train.dataset[0]
+                input = sample["data"].unsqueeze(0).to(self.device)
+                index = sample.get("index", None)
+                condition = sample.get("condition", None)
 
+                index = index.unsqueeze(0).to(self.device) if index is not None else None
+                condition = condition.unsqueeze(0).to(self.device) if condition is not None else None
+
+                out = self.model(input, index=index, condition=condition)
+                assert out.shape == input.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
+                valid = True
+            except Exception as e:
+                print("Invalid CDCD model configuration.")
+                print(e)
+
+            return valid
+
+
+class TrainerCVAE(TrainerSupervised):
+    STR = "cvae"
+    """
+    Trainer specialized for training Conditional Variational Autoencoders (CVAE).
+    The batch contains keys 'input' (data) and 'condition'.
+    """
+    def __init__(self,
+                 cfg: Config,
+                 model: torch.nn.Module,
+                 dataloader_train: torch.utils.data.DataLoader,
+                 dataloader_test: torch.utils.data.DataLoader = None,
+                 **kwargs) -> None:
+        """
+        Trainer specialized for CVAE.
+
+        Args:
+            - cfg (Config): Configuration object.
+            - model (Module): CVAE PyTorch model.
+            - dataloader_train (DataLoader): Training data loader.
+            - dataloader_test (Optional[DataLoader]): Testing data loader (default: None).
+            - **kwargs: Additional optional parameters.
+        """
+        super().__init__(cfg, model, dataloader_train, dataloader_test, **kwargs)
+
+    def _reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from encoder's latent space.
+        """
+        std = torch.exp(0.5 * logvar)  # Standard deviation
+        eps = torch.randn_like(std)  # Random normal noise
+        return mu + eps * std  # Sample from N(mu, std^2)
+
+    def _compute_loss(self, input, recon, mu, logvar):
+        """
+        Compute the total loss, combining reconstruction loss and KL divergence.
+        Args:
+            - input: Original input data.
+            - recon: Reconstructed data.
+            - mu: Mean from encoder's latent space.
+            - logvar: Log variance from encoder's latent space.
+
+        Returns:
+            - total_loss: Sum of reconstruction loss and KL divergence loss.
+            - recon_loss: Reconstruction loss.
+            - kl_div: KL divergence.
+        """
+        # Reconstruction loss (Binary Cross-Entropy or Mean Squared Error)
+        recon_loss = self.criterion(recon, input)
+
+        # KL Divergence loss
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+        # Total loss
+        total_loss = recon_loss + kl_div
+        return total_loss, recon_loss, kl_div
+
+    def _train_epoch(self):
+        """
+        Train the CVAE model for one epoch.
+        Returns:
+            - float: Average training loss for the epoch.
+        """
+        total_loss, total_recon_loss, total_kl_div = 0., 0., 0.
+        self.model.train()
+
+        for batch in tqdm(self.dataloader_train, desc="Training Batch", leave=False):
+            input = batch.pop("input")
+            condition = batch.pop("condition")
+            
+            # Move to device
+            input = input.to(self.device)
+            condition = condition.to(self.device)
+
+            # Forward pass
+            recon, mu, logvar = self.model(input, condition)
+
+            # Compute the losses
+            loss, recon_loss, kl_div = self._compute_loss(input, recon, mu, logvar)
+
+            # Backpropagation
+            loss.backward()
+            self.optim.step()
+            self.optim.zero_grad()
+
+            # Accumulate losses
+            total_loss += loss.item()
+            total_recon_loss += recon_loss.item()
+            total_kl_div += kl_div.item()
+
+        # Update learning rate
+        self._update_lr()
+
+        # Calculate average loss for the epoch
+        avg_loss = total_loss / len(self.dataloader_train.dataset)
+        avg_recon_loss = total_recon_loss / len(self.dataloader_train.dataset)
+        avg_kl_div = total_kl_div / len(self.dataloader_train.dataset)
+
+        # Write logs and history
+        self.train_loss_history.append(avg_loss)
+        self.logs_metrics_dict["loss/train"] = avg_loss
+        self.logs_metrics_dict["loss/train/recon"] = avg_recon_loss
+        self.logs_metrics_dict["loss/train/kl_div"] = avg_kl_div
+
+        return avg_loss
+
+    @torch.no_grad()
+    def _test_epoch(self):
+        """
+        Evaluate the CVAE model on the testing dataset for one epoch.
+        Returns:
+            - float: Average testing loss for the epoch.
+        """
+        total_loss, total_recon_loss, total_kl_div = 0., 0., 0.
+        self.model.eval()
+
+        for batch in tqdm(self.dataloader_test, desc="Testing Batch", leave=False):
+            input = batch.pop("input")
+            condition = batch.pop("condition")
+
+            # Move to device
+            input = input.to(self.device)
+            condition = condition.to(self.device)
+
+            # Forward pass
+            recon, mu, logvar = self.model(input, condition)
+
+            # Compute the losses
+            loss, recon_loss, kl_div = self._compute_loss(input, recon, mu, logvar)
+
+            # Accumulate losses
+            total_loss += loss.item()
+            total_recon_loss += recon_loss.item()
+            total_kl_div += kl_div.item()
+
+        # Calculate average loss for the epoch
+        avg_loss = total_loss / len(self.dataloader_test.dataset)
+        avg_recon_loss = total_recon_loss / len(self.dataloader_test.dataset)
+        avg_kl_div = total_kl_div / len(self.dataloader_test.dataset)
+
+        # Write logs and history
+        self.val_loss_history.append(avg_loss)
+        self.logs_metrics_dict["loss/val"] = avg_loss
+        self.logs_metrics_dict["loss/val/recon"] = avg_recon_loss
+
+        return avg_recon_loss
+    
+    def _test_config(self) -> bool:
+        valid = False
+        try:
+            sample = self.dataloader_train.dataset[0]
+            input = sample["input"].unsqueeze(0).to(self.device)
+            condition = sample["condition"].unsqueeze(0).to(self.device)
+
+            recon, mu, logvar = self.model(input, condition)
+            assert recon.shape == input.shape, f"Reconstruction shape mismatch: got {recon.shape}, expected {input.shape}"
+            valid = True
+        except Exception as e:
+            print("Invalid CVAE model configuration.")
+            print(e)
+
+        return valid
+    
 class TrainerFactory():
     TRAINER = {
-        "supervised": TrainerSupervised,
-        "ddpm": TrainerDDPM,
-        "cdcd": TrainerCDCD,
+        TrainerSupervised.STR: TrainerSupervised,
+        TrainerDDPM.STR: TrainerDDPM,
+        TrainerCDCD.STR: TrainerCDCD,
+        TrainerCVAE.STR: TrainerCVAE,
     }
 
     @staticmethod
-    def create_trainer(training_mode:str):
+    def get_trainer(training_mode:str):
         trainer_class = TrainerFactory.TRAINER.get(training_mode.lower())
         if not trainer_class:
-            raise ValueError("Invalid training mode. Should be supervised or ddpm.")
+            raise ValueError("Invalid training mode.")
         return trainer_class
-
