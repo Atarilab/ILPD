@@ -8,7 +8,7 @@ from mpc_controller.motions.weight_abstract import BiconvexMotionParams
 N_JOINTS = 12
 
 #### jump #########################################
-jump = BiconvexMotionParams("go2", "Jump")
+jump = BiconvexMotionParams("go2", "jump")
 
 #########
 ######### Gait parameters
