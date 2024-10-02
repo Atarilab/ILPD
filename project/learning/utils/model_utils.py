@@ -1,4 +1,5 @@
 import glob, os
+import pickle
 from typing import Tuple
 from torch.nn import Module
 from torch import load, device
@@ -78,7 +79,6 @@ def get_model(cfg:Config=None, state_path:str="") -> Module:
         config_path = glob.glob(run_dir + "/*.yaml") + glob.glob(run_dir + "/*.yml")
         assert len(config_path) > 0, f"Config file not found in {run_dir}"
         cfg = Config(config_path[0])
-
         model_name, cfg_model = cfg.model()
 
         # Code version of the run directory
@@ -124,7 +124,7 @@ def get_config(run_dir:str="") -> Config:
 def get_model_and_config(model_path : str) -> Tuple[Module, Config]:
     run_dir = os.path.split(model_path)[0]
     cfg = get_config(run_dir)
-    model = get_model(model_path)
+    model = get_model(state_path=model_path)
     
     if (model is None):
         print("Can't load pretrained model from", model_path)
@@ -135,3 +135,17 @@ def get_model_and_config(model_path : str) -> Tuple[Module, Config]:
         cfg.change_value("logdir", run_dir)
         
     return model, cfg
+
+def get_normalization_stats(model_path : str) -> dict:
+    """
+    Returns normalizations stats from run directory.
+    """
+    run_dir = os.path.split(model_path)[0]
+    normalization_file_path = glob.glob(run_dir + "/*.pkl")
+    normalization_stats = {}
+    
+    if normalization_file_path:
+        with open(normalization_file_path[0], 'rb') as f:
+            normalization_stats =  pickle.load(f)
+        
+    return normalization_stats

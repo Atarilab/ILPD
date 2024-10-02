@@ -144,6 +144,7 @@ class CVAE_Transformer(nn.Module):
                  latent_dim: int,
                  n_hidden: int,
                  state_dim: int,
+                 history_dim: int,
                  history_length: int,
                  n_layers:int,
                  n_heads:int,
@@ -155,14 +156,15 @@ class CVAE_Transformer(nn.Module):
         
         self.state_dim = state_dim
         self.input_dim = input_dim
+        self.cond_dim = input_dim - self.state_dim 
         self.output_dim = output_dim
         self.latent_dim = latent_dim
-        self.history_dim = state_dim * history_length
+        self.history_dim = history_dim * history_length
         self.ghost_dim = ghost_dim       
         
         # Conditional encoder and decoder
         self.transformer = TransformerHist(
-            state_dim,
+            history_dim,
             history_length,
             n_layers,
             n_heads,
@@ -242,18 +244,15 @@ class CVAE_Transformer(nn.Module):
         """
         # Train / validation
         if not conditioning is None:
+            state_t, state_history, goal_cond = torch.split(conditioning, [self.state_dim, self.history_dim, self.cond_dim], dim=-1)
             # Encoding: get mean and log variance
-            state_history = conditioning[:, :self.history_dim]
             mu, logvar = self.encode(x, state_history)
-                
             # Reparameterization trick: sample z from latent space
             z = self.reparameterize(mu, logvar)
                 
             # Decoding: reconstruct the output using the latent variable and conditioning
-            # Last state
-            state_goal_conditioning = conditioning[:, :self.input_dim]
             # Goal conditioning
-            state_goal_conditioning[:, -5:] = conditioning[:, -5:]
+            state_goal_conditioning = torch.cat((state_t, goal_cond), dim=-1)
             recon = self.decode(z, state_goal_conditioning)
             return recon, mu, logvar
         
@@ -278,9 +277,9 @@ class CVAE_Transformer(nn.Module):
         z = self.reparameterize(mu, logvar)
                 
         # Decoding: reconstruct the output using the latent variable and conditioning
-        # Last state
-        state_goal_conditioning = conditioning[:, :self.input_dim]
+        state_t, goal_cond = conditioning[:, :self.state_dim], conditioning[:, -self.cond_dim:]
         # Goal conditioning
-        state_goal_conditioning[:, -5:] = conditioning[:, -5:]
+        state_goal_conditioning = torch.cat((state_t, goal_cond), dim=-1)
         recon = self.decode(z, state_goal_conditioning)
+        
         return recon

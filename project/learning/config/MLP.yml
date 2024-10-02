@@ -7,7 +7,9 @@ DATA:
     contact_conditioned: False
     normalize: True
     sigma_noise: 0.
-    history_length: 1
+    history_length: 0
+    state_variables: ["gravity_b", "qj", "v", "feet_pos_b"]
+    history_variables: ["gravity_b", "qj", "v", "feet_pos_b"]
 
 MODEL:
   name: MLPPosEmb
@@ -27,21 +29,5 @@ TRAINER: # arguments that will be passed to the trainer
       optimizer_name: Adam
     lr: 5.0e-4
     epochs: 300
-    logdir: "./logs/MLP/trot_vel_set_points"
+    logdir: "./logs/trot_vel_torques/MLP"
     use_logger: True
-    # lr_scheduler:
-    #   lr_scheduler_name: ExponentialLR
-    #   PARAMS:
-    #     gamma: 0.9985
-
-# SWEEP: # arguments to sweep over and their values
-#   latent_dim: [32, 64]
-#   points_per_circle:
-#     min: 3
-#     max: 10
-#     n: 3
-#   lr:
-#     min: 0.0001
-#     max: 0.001
-#     n: 2
-#     logspace: True

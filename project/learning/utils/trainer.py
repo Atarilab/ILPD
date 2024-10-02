@@ -1,6 +1,7 @@
 
 
 import os, glob
+import shutil
 import torch
 import math
 import matplotlib.pyplot as plt
@@ -306,8 +307,20 @@ class TrainerBase():
         To be overwritten.
         """
         return True
-        
-        
+    
+    def copy_normalization_stats_to_run_dir(self, normalization_file : str = ""):
+        """
+        Copy normalization file to run directory.
+        """
+        # copy normalization to run dir if provided
+        if normalization_file:
+            file_name = os.path.split(normalization_file)[1]
+            copy_normalization_path = os.path.join(self.run_dir, file_name)
+            if not os.path.exists(copy_normalization_path):
+                shutil.copy(normalization_file, copy_normalization_path)
+
+    def train():
+        pass
 
 ####################################################
 ###################  SUPERVISED  ###################
@@ -453,10 +466,13 @@ class TrainerSupervised(TrainerBase):
         valid = False
         try:
             sample = self.dataloader_train.dataset[0]
+            # Repeat in case of batch norm
             input = sample["input"].unsqueeze(0).to(self.device)
             target = sample["target"].unsqueeze(0).to(self.device)
-            
+
+            self.model = self.model.eval()
             out = self.model(input)
+            self.model = self.model.train()
             assert out.shape == target.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
             valid = True
         except Exception as e:
@@ -644,7 +660,9 @@ class TrainerDDPM(TrainerSupervised):
             condition = sample.get("condition", None)
             condition = condition.unsqueeze(0).to(self.device) if condition is not None else None
 
+            self.model = self.model.eval()
             out = self.model(input, condition=condition)
+            self.model = self.model.train()
             assert out.shape == input.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
             valid = True
         except Exception as e:
@@ -784,8 +802,10 @@ class TrainerCDCD(TrainerDDPM):
 
                 index = index.unsqueeze(0).to(self.device) if index is not None else None
                 condition = condition.unsqueeze(0).to(self.device) if condition is not None else None
-
+                
+                self.model = self.model.eval()
                 out = self.model(input, index=index, condition=condition)
+                self.model = self.model.train()
                 assert out.shape == input.shape, f"Output shape mismatch: got {out.shape}, expected {input.shape}"
                 valid = True
             except Exception as e:
@@ -947,8 +967,9 @@ class TrainerCVAE(TrainerSupervised):
             sample = self.dataloader_train.dataset[0]
             input = sample["input"].unsqueeze(0).to(self.device)
             condition = sample["condition"].unsqueeze(0).to(self.device)
-
+            self.model = self.model.eval()
             recon, mu, logvar = self.model(input, condition)
+            self.model = self.model.train()
             assert recon.shape == input.shape, f"Reconstruction shape mismatch: got {recon.shape}, expected {input.shape}"
             valid = True
         except Exception as e:
@@ -966,7 +987,7 @@ class TrainerFactory():
     }
 
     @staticmethod
-    def get_trainer(training_mode:str):
+    def get_trainer(training_mode:str) -> TrainerBase:
         trainer_class = TrainerFactory.TRAINER.get(training_mode.lower())
         if not trainer_class:
             raise ValueError("Invalid training mode.")

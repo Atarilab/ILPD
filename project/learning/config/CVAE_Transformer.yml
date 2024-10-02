@@ -9,19 +9,22 @@ DATA:
     sigma_noise: 0.
     history_length: 10
     CVAE: True
+    state_variables: ["gravity_b", "qj", "v", "feet_pos_b"]
+    history_variables: ["gravity_b", "qj", "v", "feet_pos_b", "time_to_contact", "tau"]
 
 MODEL:
   name: CVAE_Transformer
   PARAMS: # arguments that will be passed to the chosen models
     input_dim: 50
     output_dim: 12
-    state_dim: 57
+    state_dim: 45
+    history_dim: 61
     history_length: 10
     n_hidden: 3
     n_layers: 2
     n_heads: 8
     hidden_dim: 128
-    latent_dim: 10
+    latent_dim: 4
     dropout: 0.3
     batch_norm: True
 
@@ -34,21 +37,5 @@ TRAINER: # arguments that will be passed to the trainer
       weight_decay: 1.0e-5
     lr: 5.0e-4
     epochs: 300
-    logdir: "./logs/trot_vel_set_points/CVAE_Transformer"
+    logdir: "./logs/trot_vel_torques/CVAE_Transformer"
     use_logger: True
-    # lr_scheduler:
-    #   lr_scheduler_name: ExponentialLR
-    #   PARAMS:
-    #     gamma: 0.9985
-
-# SWEEP: # arguments to sweep over and their values
-#   latent_dim: [32, 64]
-#   points_per_circle:
-#     min: 3
-#     max: 10
-#     n: 3
-#   lr:
-#     min: 0.0001
-#     max: 0.001
-#     n: 2
-#     logspace: True

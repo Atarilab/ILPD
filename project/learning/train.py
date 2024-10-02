@@ -8,7 +8,7 @@ from typing import Optional
 
 from utils.config import Config
 from utils.sweep import SweepParametersConfig
-from utils.trainer import TrainerFactory
+from utils.trainer import TrainerBase, TrainerFactory
 from utils.model_utils import get_model, get_model_and_config
 from utils.data_utils import get_dataloaders
 
@@ -33,9 +33,8 @@ def main(
     else:
         config = Config(cfg)
 
-
     ### DATA
-    dataloader_train, dataloader_test = get_dataloaders(*config.data())
+    dataloader_train, dataloader_test, normalization_file = get_dataloaders(*config.data())
 
     ### TRAIN
     for config in SweepParametersConfig(config):
@@ -43,7 +42,8 @@ def main(
         model = get_model(config, state_path=model_path)
         
         trainer_ = TrainerFactory.get_trainer(config.trainer()[0])
-        trainer = trainer_(config, model, dataloader_train, dataloader_test, run_dir_name=desc)
+        trainer : TrainerBase = trainer_(config, model, dataloader_train, dataloader_test, run_dir_name=desc)
+        trainer.copy_normalization_stats_to_run_dir(normalization_file)
         trainer.train()
 
 if __name__ == "__main__":

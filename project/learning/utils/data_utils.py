@@ -53,7 +53,7 @@ class DatasetLoader:
         
         return self.dataset
 
-def get_dataloaders(dataset_name: str, cfg_dataset: dict) -> Tuple[DataLoader, DataLoader]:
+def get_dataloaders(dataset_name: str, cfg_dataset: dict) -> Tuple[DataLoader, DataLoader, str]:
     """
     Create train and validation DataLoaders from the given dataset.
     The last `split_ratio` of the dataset is used for validation.
@@ -71,7 +71,10 @@ def get_dataloaders(dataset_name: str, cfg_dataset: dict) -> Tuple[DataLoader, D
     # Get dataset from name and config
     dataset_loader = DatasetLoader()
     dataset = dataset_loader.load(dataset_name, **cfg_dataset)
-        
+    normalization_file_path = ""
+    if hasattr(dataset, "normalization_file_path"):
+        normalization_file_path = dataset.normalization_file_path
+    
     # Split dataset
     split_ratio = cfg_dataset.get("split_ratio", DEFAULT_SPLIT_RATIO)
     total_size = len(dataset)
@@ -97,5 +100,5 @@ def get_dataloaders(dataset_name: str, cfg_dataset: dict) -> Tuple[DataLoader, D
     for key, value in batch.items():
         print(key, ":", list(value.shape))
 
-    return train_loader, val_loader
+    return train_loader, val_loader, normalization_file_path
 
