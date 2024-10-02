@@ -10,8 +10,8 @@ from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.mpc_data_recorder import MPCDataRecorder
 from mpc_controller.torque_set_points import TorqueSetPointsBiconMPC
 from mj_pin_wrapper.mj_pin_robot import MJPinQuadRobotWrapper
-from learning.utils.model_utils import get_model, get_config
-from project.learning.data.MPCTrajectoryDataset import MPCTrajectoryDataset
+from learning.utils.model_utils import get_model_and_config, get_normalization_stats
+from learning.data.MPCTrajectoryDataset import MPCTrajectoryDataset
 from utils.visuals import express_contact_plan_in_consistant_frame
 
 
@@ -41,37 +41,56 @@ class LearnedBiconMPC(BiConMPC):
         self.nu = self.robot.nu
         self.model_output = np.zeros(self.nu)
         self.torque_set_points = TorqueSetPointsBiconMPC(self, Kp, Kd)
+        self.feet_name = ["FL", "FR", "RL", "RR"]
         
         # State history buffer
         self.state_history = []  # Buffer to hold the recent state history
 
-
-        # Load model
+        # Load model and config in run dir
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_path = model_path
-        self.model = get_model(state_path=model_path).to(self.device).eval()
-
-        # Load data config
-        cfg = get_config(run_dir=self.model_path)
+        self.model, cfg = get_model_and_config(model_path)
+        self.model = self.model.to(self.device).eval()
+        
+        # Get config parameters
         cfg_dict = cfg.get_cfg_as_dict()
         self.use_set_points = cfg_dict.get("use_set_points", False)
         self.contact_conditioned = cfg_dict.get("contact_conditioned", False)
-        self.history_length = cfg_dict.get("history_length", False)
-
+        self.history_length = cfg_dict.get("history_length", 0)
+        self.state_variables = cfg_dict.get("state_variables", [])
+        self.history_variables = cfg_dict.get("history_variables", [])
+        self.var_to_normalize = MPCTrajectoryDataset.VARIABLE_TO_NORMALIZE
+        
+        if not self.state_variables:
+            self.state_variables = MPCTrajectoryDataset.DEFAULT_STATE_VARIABLES
+        if not self.history_variables:
+            self.history_variables = MPCTrajectoryDataset.DEFAULT_STATE_VARIABLES
+            
         if self.use_set_points:
             self.joint_name2act_id = self.robot.joint_name2act_id
         else:
             self.joint_name2act_id = self.mj_robot.joint_name2act_id
 
-        # Load or initialize statistics
+        # Load or initialize normalization statistics
         self.normalize = cfg_dict.get("normalize", False)
-        self.data_stats = {}
         if self.normalize:
-            data_dir = cfg_dict.get("data_dir", "")
-            self.stats_file = os.path.join(data_dir, LearnedBiconMPC.NORMALIZATION_FILE)
-            self.load_data_stats()
+            self.norm_stats = get_normalization_stats(model_path)
+            self.mean = self.norm_stats["mean"]
+            self.std = self.norm_stats["std"]
+            # Convert to numpy array
+            for d in [self.mean, self.std]:
+                for k, v in d.items():
+                    d[k] = v.numpy()
+            
+            if self.use_set_points:
+                self.mean_target = self.mean["pd_set_points"]
+                self.std_target = self.std["pd_set_points"]
+            else:
+                self.mean_target = self.mean["tau"]
+                self.std_target = self.std["tau"]
         else:
             print("No statistics file provided, skipping normalization.")
+
             
     def load_data_stats(self):
         """
@@ -107,28 +126,18 @@ class LearnedBiconMPC(BiConMPC):
         else:
             print(f"Statistics file {self.stats_file} not found, skipping normalization.")
 
-    def normalize_inputs(self, input: np.ndarray) -> np.ndarray:
+    def normalize_inputs(self, variables : dict) -> dict:
         """
         Normalize the input using the precomputed mean and standard deviation. 
         This handles inputs with concatenated state history.
         """
-        if self.history_length > 1:
-            state_dim = len(self.state_history[0])
-            mean_state = self.mean_input[:state_dim]
-            std_state = self.std_input[:state_dim]
-            
-            # Since the history is concatenated, we repeat the mean and std for each timestep in the history
-            mean_state_repeated = np.tile(mean_state, self.history_length - 1)
-            std_state_repeated = np.tile(std_state, self.history_length - 1)
-            
-            mean_full = np.concatenate((mean_state_repeated, self.mean_input))
-            std_full = np.concatenate((std_state_repeated, self.std_input))
-            input = (input - mean_full) / (std_full + 1e-8)  # Adding epsilon for numerical stability
+        normalized_variable = {}
+        for var_name, value in variables.items():
+            if var_name in self.var_to_normalize:
+                command = f"normalized_variable['{var_name}'] = (value - self.mean['{var_name}']) / (self.std['{var_name}'] + 1.0e-8)"
+                exec(command)
         
-        else:
-            input = (input - self.mean_input) / (self.std_input + 1e-8)  # Adding epsilon for numerical stability
-            
-        return input
+        return normalized_variable
     
     def denormalize_targets(self, targets: np.ndarray) -> np.ndarray:
         targets = targets * self.std_target + self.mean_target
@@ -143,21 +152,17 @@ class LearnedBiconMPC(BiConMPC):
         points_b = points_b_homogeneous[:3, :].T
         return points_b
 
-
-    def _store_state_history(self, q: np.ndarray, v: np.ndarray, gravity_b: np.ndarray, feet_pos_b: np.ndarray):
+    def _store_state_history(self, current_state : np.ndarray):
         """
         Store the current state in the history buffer.
+        The history include the current state.
         Args:
-            q (np.ndarray): Joint positions (after removing base pose)
-            v (np.ndarray): Joint velocities
-            gravity_b (np.ndarray): Gravity vector in base frame
-            feet_pos_b (np.ndarray): Feet positions in base frame
+            current_state (np.ndarray): current state (normalized already)
         """
-        state = np.concatenate([gravity_b, q[7:], v, feet_pos_b])
-        self.state_history.insert(0, state)
+        self.state_history.insert(0, current_state)
 
         # If the buffer exceeds the history length, remove the oldest state
-        if len(self.state_history) > self.history_length:
+        if len(self.state_history) > self.history_length + 1:
             self.state_history.pop()
 
     def _get_state_history(self) -> np.ndarray:
@@ -166,12 +171,14 @@ class LearnedBiconMPC(BiConMPC):
         If the history is shorter than the requested length (e.g., at the start of a run), 
         the current state is duplicated to fill the gap.
         """
-        if len(self.state_history) < self.history_length:
+        if len(self.state_history) < self.history_length + 1:
             # If the history is shorter, pad by repeating the last available state
-            padding = [self.state_history[0]] * (self.history_length - len(self.state_history))
-            return np.concatenate(padding + self.state_history)
+            padding = [self.state_history[-1]] * (self.history_length + 1 - len(self.state_history))
+            # Exclude the first state (current state)
+            return np.concatenate(self.state_history[1:] + padding)
         else:
-            return np.concatenate(self.state_history)
+            # Exclude the first state (current state)
+            return np.concatenate(self.state_history[1:])
         
     def get_inputs(self,
                    q,
@@ -183,52 +190,62 @@ class LearnedBiconMPC(BiConMPC):
         """
         t = mj_data.time
         
+        #
+        pose, qj = np.split(q, [7], axis=-1)
+        
         # Feet position in base frame
-        feet_pos_b = self.robot.get_foot_pos_base().reshape(-1)
+        feet_pos_b = self.mj_robot.get_foot_pos_base().reshape(-1)
 
         # Foot in contact
-        feet_contacts = self.mj_robot.foot_contacts()
-        feet_contacts_array = np.array([
-            feet_contacts["FL"],
-            feet_contacts["FR"],
-            feet_contacts["RL"],
-            feet_contacts["RR"],
-        ])
+        contacts = self.mj_robot.foot_contacts()
+        feet_contact = np.array([contacts[foot_name] for foot_name in self.feet_name])
 
-        B_T_W = pin.XYZQUATToSE3(q[:7]).inverse()
+        # Gravity in base frame
+        B_T_W = pin.XYZQUATToSE3(pose).inverse()
         B_R_W = B_T_W.rotation
         gravity_b = -B_R_W[:, -1]
-
-        # Store the current state in the history buffer
-        self._store_state_history(q, v, gravity_b, feet_pos_b)
-
-        # Get the concatenated state history
-        state_history = self._get_state_history()
-
-        if self.contact_conditioned:
-            time_to_cnt = np.round(np.clip(self.next_cnt_abs_time - t, 0., np.inf), 3)
-            next_cnt_pos_b = self.transform_points(B_T_W, self.next_cnt_pos_w).reshape(-1)
-
-            inputs = np.concatenate((
-                state_history,
-                next_cnt_pos_b,
-                feet_contacts_array,
-                time_to_cnt,
-            ))
-        else:
-            phase = self.gait_gen.gait_planner.get_phi(t, 0) / self.gait_period
-            inputs = np.concatenate((
-                state_history,
-                self.v_des,
-                np.array([self.w_des]),
-                np.array([phase])
-            ))
-
-        # Normalize the inputs
-        if self.normalize:
-            inputs = self.normalize_inputs(inputs)
         
-        return inputs
+        # Contacts position and timings
+        time_to_cnt = np.round(np.clip(self.next_cnt_abs_time - t, 0., np.inf), 3)
+        target_contact_b = self.transform_points(B_T_W, self.next_cnt_pos_w).reshape(-1)
+
+        # Gait phase
+        phase = self.gait_gen.gait_planner.get_phi(t, 0) / self.gait_period
+        
+        # Normalize variables
+        del contacts, B_T_W, B_R_W, t, pose
+        if self.normalize:
+            normalized_variables = self.normalize_inputs(locals())
+            for var_name in normalized_variables.keys():
+                command = f"{var_name} = normalized_variables['{var_name}']"
+                exec(command)
+            
+        # Concatenate inputs array
+        inputs = []
+        # state
+        for var_name in self.state_variables:
+            exec(f"inputs.append({var_name})")
+        state_t = np.concatenate(inputs)
+        
+        # Add state to history
+        self._store_state_history(state_t)
+
+        # history
+        state_history = self._get_state_history()
+        inputs.append(state_history)
+        
+        # goal conditioning
+        if self.contact_conditioned:
+            inputs.append(target_contact_b)
+            inputs.append(time_to_cnt)
+            
+        else:
+            inputs.append(self.v_des)
+            inputs.append([self.w_des])
+            inputs.append([phase])
+
+        inputs_array = np.concatenate(inputs)
+        return inputs_array
     
     def _call_policy(self) -> bool:
         return self.step % self.policy_step_period == 0
