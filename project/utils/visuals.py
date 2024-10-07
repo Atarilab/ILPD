@@ -40,7 +40,8 @@ def express_contact_plan_in_consistant_frame(q : np.ndarray,
     # X = [x_W, y_W, z_B]
     # A = [[1,0,0], [0,1,0], [0,0,0]] - B_R_W[:, -1]
     # B = W_R_B . ([x_B, y_B, 0].T - W_p_B) - [0, 0, z_W].T
-    # (W_p_B = [0., 0., 0.].T as the contact plan is computed with the base at the origin)
+    # (W_p_B = [0., 0., z_B].T as the contact plan is computed with the base at the origin)
+    # B = W_R_B . ([x_B, y_B, -z_B].T) - [0, 0, z_W].T
     # Then X = A^{-1}.B
  
     # Reshape to process all positions at once
@@ -48,7 +49,6 @@ def express_contact_plan_in_consistant_frame(q : np.ndarray,
 
     # Rotation matrix W_R_B from world to base
     W_R_B = pin.Quaternion(q[3:7]).matrix()  # Rotation matrix from base to world
-    W_p_B = q[:3]  # Translation vector from base to world
     
     # Analytical form of the inverse of A
     A_inv = np.diag([1., 1., 1. / W_R_B[-1, -1]])
@@ -56,10 +56,10 @@ def express_contact_plan_in_consistant_frame(q : np.ndarray,
 
     # Prepare the contact positions for vectorized operation
     p_B = cnt_plan_p.copy()
-    p_B[:, -1] = 0.  # Set z_B to 0 for all points
+    p_B[:, -1] = -q[2]  # Set z_B for all points
 
     # Compute B for all contact points in one operation
-    B = W_R_B @ p_B.T  # Apply rotation to the base frame points
+    B = W_R_B @ (p_B.T) # Apply rotation to the base frame points
     B = B.T  # Transpose to get shape [N, 3]
     B[:, -1] -= cnt_plan_p[:, -1]  # Subtract z_W from the last coordinate of B
 
@@ -70,7 +70,7 @@ def express_contact_plan_in_consistant_frame(q : np.ndarray,
     if base_frame:
         cnt_plan_p[:, -1] = X[:, -1]  # Update z_B in base frame
     else:
-        cnt_plan_p[:, :-1] = X[:, :-1] + W_p_B[:-1]  # Update x_W and y_W in world frame
+        cnt_plan_p[:, :-1] = X[:, :-1] + q[:2]  # Update x_W and y_W in world frame
 
     # Reshape back to the original shape [H, 4, 3]
     cnt_plan_p = cnt_plan_p.reshape(-1, 4, 3)
